@@ -86,7 +86,7 @@
 #define PTF(s) Serial.print(F(s))//trade flash memory for dynamic memory with F() function
 #define PTLF(s) Serial.println(F(s))
 
-//board configuration
+//board configuration - pin definitions
 #define INTERRUPT 0
 #define IR_RECIEVER 4 // Signal Pin of IR receiver to Arduino Digital Pin 4
 #define BUZZER 5
@@ -95,13 +95,14 @@
 #define BATT A0
 
 #ifdef ULTRA_SOUND
-#define VCC 8
-#define TRIGGER 9
-#define ECHO 10
-#define LONGEST_DISTANCE 200 // 200 cm = 2 meters
-float farTime =  LONGEST_DISTANCE * 2 / 0.034;
+  #define VCC 8
+  #define TRIGGER 9
+  #define ECHO 10
+  #define LONGEST_DISTANCE 200 // 200 cm = 2 meters
+  float farTime =  LONGEST_DISTANCE * 2 / 0.034; // 400cm / 0.034 = 11176 ms expected response time?
 #endif
 
+// creates a beep
 void beep(int8_t note, float duration = 10, int pause = 0, byte repeat = 1 ) {
   if (note == 0) {//rest note
     analogWrite(BUZZER, 0);
@@ -139,6 +140,7 @@ void meow(int repeat = 0, int pause = 200, int startF = 50,  int endF = 200, int
   }
 }
 
+// motor pin definitions
 #ifdef NyBoard_V0_1
 byte pins[] = {7, 0, 8, 15,
                6, 1, 14, 9,
@@ -156,18 +158,19 @@ byte pins[] = {4, 3, 11, 12,
 #endif
 
 #ifdef NYBBLE
-#define HEAD
-#define TAIL
-#define X_LEG
-#define WALKING_DOF 8
+  #define HEAD
+  #define TAIL
+  #define X_LEG
+  #define WALKING_DOF 8
 
 #else
 #ifdef BIT
-//#define MPU_YAW180
-#define LL_LEG
-#define WALKING_DOF 8
+  //#define MPU_YAW180
+  #define LL_LEG
+  #define WALKING_DOF 8
 #endif
 #endif
+
 //remap pins for different walking modes, pin4 ~ pin15
 byte fast[] = {
   4, 4, 7, 7,
@@ -205,13 +208,15 @@ byte right[] = {
 
 #define ADAPT_PARAM 160          // 16 x NUM_ADAPT_PARAM byte array
 #define NUM_ADAPT_PARAM  2    // number of parameters for adaption
+
+// 1 byte = 8 bit so numbers between 0 to 255 can be represented
 #define SKILLS 200         // 1 byte for skill name length, followed by the char array for skill name
 // then followed by i(nstinct) on progmem, or n(ewbility) on progmem
 
 //servo constants
 #define DOF 16
 #define PWM_FACTOR 4
-#define MG92B_MIN 170*PWM_FACTOR
+#define MG92B_MIN 170*PWM_FACTOR // pulse length min out of 4096
 #define MG92B_MAX 550*PWM_FACTOR
 #define MG92B_RANGE 150
 
@@ -259,6 +264,8 @@ int8_t melody[] = {8, 13, 10, 13, 8,  0,  5,  8,  3,  5, 8,
               };*/
 //byte pins[] = {11, 12, 4, 16, 16, 16, 16, 16, 9,14,1,6,8,15,0,7};//tail version
 
+// int8_t is 8 bit signed int: -127 to +127, byte is 8 bit anything?
+
 int8_t calibs[] = {0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0};
 int8_t middleShifts[] = {0, 15, 0, 0,
                          -45, -45, -45, -45,
@@ -284,12 +291,15 @@ byte servoAngleRanges[] =  {KUDO_RANGE, KUDO_RANGE, KUDO_RANGE, KUDO_RANGE,
                             KUDO_RANGE, KUDO_RANGE, KUDO_RANGE, KUDO_RANGE,
                            };
 #endif
+
+// motor angle trackers                     
 float pulsePerDegree[DOF] = {};
 int8_t servoCalibs[DOF] = {};
 char currentAng[DOF] = {};
 int calibratedDuty0[DOF] = {};
 
 //This function will write a 2 byte integer to the eeprom at the specified address and address + 1
+// ie 16 bit so 2^16 = 65k is allowed as unsigned int value to store
 void EEPROMWriteInt(int p_address, int p_value)
 {
   byte lowByte = ((p_value >> 0) & 0xFF);
@@ -310,7 +320,7 @@ int EEPROMReadInt(int p_address)
 #define WIRE_BUFFER 30 //Arduino wire allows 32 byte buffer, with 2 byte for address.
 #define WIRE_LIMIT 16 //That leaves 30 bytes for data. use 16 to balance each writes
 #define PAGE_LIMIT 32 //AT24C32D 32-byte Page Write Mode. Partial Page Writes Allowed
-#define EEPROM_SIZE (65536/8)
+#define EEPROM_SIZE (65536/8) // in bytes, about 8kb
 #define SKILL_HEADER 3
 
 bool EEPROMOverflow = false;
@@ -318,9 +328,9 @@ void copyDataFromPgmToI2cEeprom(unsigned int &eeAddress, unsigned int pgmAddress
   uint8_t period = pgm_read_byte(pgmAddress);//automatically cast to char*
   byte frameSize = period > 1 ? WALKING_DOF : 16;
   int len = period * frameSize + SKILL_HEADER;
-  int writtenToEE = 0;
+  int writtenToEE = 0; // bytes of data written to EEPROM so far
   while (len > 0) {
-    Wire.beginTransmission(DEVICE_ADDRESS);
+    Wire.beginTransmission(DEVICE_ADDRESS); // send to EEPROM address
     Wire.write((int)((eeAddress) >> 8));   // MSB
     Wire.write((int)((eeAddress) & 0xFF)); // LSB
     /*PTF("\n* current address: ");
@@ -339,7 +349,7 @@ void copyDataFromPgmToI2cEeprom(unsigned int &eeAddress, unsigned int pgmAddress
       }
       /*PT((int8_t)pgm_read_byte(pgmAddress + writtenToEE));
         PT("\t");*/
-      Wire.write((byte)pgm_read_byte(pgmAddress + writtenToEE++));
+      Wire.write((byte)pgm_read_byte(pgmAddress + writtenToEE++)); // read pgm addresses sequentially incrementing by 1 each loop
       writtenToWire++;
       eeAddress++;
     } while ((--len > 0 ) && (eeAddress  % PAGE_LIMIT ) && (writtenToWire < WIRE_LIMIT));//be careful with the chained conditions
@@ -502,6 +512,7 @@ class Motion {
 
 Motion motion;
 
+// tell EEPROM address of each motion sequence for legs
 void assignSkillAddressToOnboardEeprom() {
   int skillAddressShift = 0;
   PT("\n* Assigning ");
@@ -648,16 +659,18 @@ void saveCalib(int8_t *var) {
   }
 }
 
+// provide angle and motor index, turn servo to angle
 void calibratedPWM(byte i, float angle) {
   /*float angle = max(-SERVO_ANG_RANGE/2, min(SERVO_ANG_RANGE/2, angle));
     if (i > 3 && i < 8)
     angle = max(-5, angle);*/
-  currentAng[i] = angle;
-  int duty = calibratedDuty0[i] + angle * pulsePerDegree[i] * rotationDirection(i);
-  duty = max(SERVOMIN , min(SERVOMAX , duty));
-  pwm.setPWM(pin(i), 0, duty);
+  currentAng[i] = angle; // record the state
+  int duty = calibratedDuty0[i] + angle * pulsePerDegree[i] * rotationDirection(i); // starting angle + angle * pulsePerDegree * direction
+  duty = max(SERVOMIN , min(SERVOMAX , duty)); // constrain required angle to servo range
+  pwm.setPWM(pin(i), 0, duty); // turn servo by angle
 }
 
+// set all motors to angles
 void allCalibratedPWM(char * dutyAng) {
   for (int8_t i = DOF - 1; i >= 0; i--) {
     calibratedPWM(i, dutyAng[i]);

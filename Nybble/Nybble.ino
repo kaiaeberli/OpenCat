@@ -31,10 +31,10 @@
 #include "WriteInstinct/OpenCat.h"
 
 #include <I2Cdev.h>
-#include <MPU6050_6Axis_MotionApps20.h>
+#include <MPU6050_6Axis_MotionApps20.h> // include gyro header file
 
 
-#define PACKET_SIZE 42
+#define PACKET_SIZE 42 // 42 byte packet size
 #define OVERFLOW_THRESHOLD 128
 
 //#if OVERFLOW_THRESHOLD>1024-1024%PACKET_SIZE-1   // when using (1024-1024%PACKET_SIZE) as the overflow resetThreshold, the packet buffer may be broken
@@ -43,28 +43,48 @@
 //#endif
 #define HISTORY 2
 int8_t lag = 0;
-float ypr[3];         // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
-float yprLag[HISTORY][2];
+float ypr[3];         // [yaw, pitch, roll] in radians.  yaw/pitch/roll container and gravity vector
+float yprLag[HISTORY][2]; // length 2, 2 columns?
 
-MPU6050 mpu;
+MPU6050 mpu; // gyro and accelerometer
+
+/*
+
+The MPU6050 IMU contains a DMP (Digital Motion Processor) which fuses 
+the accelerometer and gyroscope data together to minimize 
+the effects of errors inherent in each sensor
+
+It stores sensor data in a FIFO register, that can be accessed via Serial port.
+
+An interrupt function can tell when there is new data in FIFO available.
+*/
+
+
 #define OUTPUT_READABLE_YAWPITCHROLL
+
 // MPU control/status vars
 bool dmpReady = false;  // set true if DMP init was successful
 uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
 uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
 uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;     // count of all bytes currently in FIFO
+uint16_t fifoCount;     // count of all bytes currently in FIFO. FIFO is an internal datastore for the MPU that can be read via Serial interface.
 uint8_t fifoBuffer[PACKET_SIZE]; // FIFO storage buffer
 
 // orientation/motion vars
 Quaternion q;           // [w, x, y, z]         quaternion container
 VectorFloat gravity;    // [x, y, z]            gravity vector
 
+
+
+
+
+
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
 // ================================================================
 
 volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
+// if high it means there is new data vailable in FIFO register to be read
 void dmpDataReady() {
   mpuInterrupt = true;
 }
@@ -150,18 +170,18 @@ String translateIR() // takes action based on IR code received
   }// End Case
   //delay(100); // Do not get immediate repeat //no need because the main loop is slow
 
-  // The control could be organized in another way, such as:
+  // The control key map could be organized in another way, such as:
   // forward/backward to change the gaits corresponding to different speeds.
   // left/right key for turning left and right
   // number keys for different postures or behaviors
 }
 
 
-char token;
+char token; // a single character
 #define CMD_LEN 10
-char *lastCmd = new char[CMD_LEN];
+char *lastCmd = new char[CMD_LEN]; // defines a pointer to an array of chars with length 10
 char *newCmd = new char[CMD_LEN];
-byte newCmdIdx = 0;
+byte newCmdIdx = 0; // a collection of bits, only bitwise operations are defined on it
 byte hold = 0;
 int8_t offsetLR = 0;
 bool checkGyro = true;
@@ -178,8 +198,12 @@ byte jointIdx = 0;
 
 unsigned long usedTime = 0;
 
+
+// check the gyro data to see how the body has moved
 void checkBodyMotion()  {
   if (!dmpReady) return;
+  
+  // check if FIFO register in gyro has new data....
   // wait for MPU interrupt or extra packet(s) available
   //while (!mpuInterrupt && fifoCount < packetSize) ;
   if (mpuInterrupt || fifoCount >= packetSize)
@@ -208,9 +232,10 @@ void checkBodyMotion()  {
     }
     else if (mpuIntStatus & 0x02) {
       // wait for correct available data length, should be a VERY short wait
+      // this waits until FIFO data count is at least one packet long
       while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
 
-      // read a packet from FIFO
+      // read a data packet from FIFO
       mpu.getFIFOBytes(fifoBuffer, packetSize);
 
       // track FIFO count here in case there is > 1 packet available
@@ -221,9 +246,9 @@ void checkBodyMotion()  {
       // display Euler angles in degrees
       mpu.dmpGetQuaternion(&q, fifoBuffer);
       mpu.dmpGetGravity(&gravity, &q);
-      mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+      mpu.dmpGetYawPitchRoll( ypr, &q, &gravity); // populate ypr array with gyro data
 #ifdef MPU_YAW180
-      ypr[2] = -ypr[2];
+      ypr[2] = -ypr[2]; // 0 yaw, 1 pitch, 2 roll
 #else
       ypr[1] = -ypr[1] ;
 #endif
@@ -231,7 +256,8 @@ void checkBodyMotion()  {
       /*PT(ypr[1] * degPerRad);
         PTF("\t");
         PTL(ypr[2] * degPerRad);*/
-      // overflow is detected after the ypr is read. it's necessary to keep a lag recrod of previous reading.  -- RzLi --
+
+      // overflow is detected after the ypr is read. it's necessary to keep a lag record of previous reading.  -- RzLi --
 #ifdef FIX_OVERFLOW
       for (byte g = 0; g < 2; g++) {
         yprLag[lag][g] = ypr[g + 1];
@@ -239,21 +265,23 @@ void checkBodyMotion()  {
       }
       lag = (lag + 1) % HISTORY;
 #endif
+
       // --
       //deal with accidents
-      if (fabs(ypr[1])*degPerRad > LARGE_PITCH) {
+      if (fabs(ypr[1])*degPerRad > LARGE_PITCH) { // if pitch is too high, cat has flipped over to the front or back...
 #ifdef DEVELOPER
-        PT(ypr[1] * degPerRad);
+        PT(ypr[1] * degPerRad); // print pitch
         PTF("\t");
-        PTL(ypr[2] * degPerRad);
+        PTL(ypr[2] * degPerRad); // print roll
 #endif
         if (!hold) {
           token = 'k';
-          strcpy(newCmd, ypr[1]*degPerRad > LARGE_PITCH ? "lifted" : "dropped");
+          strcpy(newCmd, ypr[1]*degPerRad > LARGE_PITCH ? "lifted" : "dropped"); // high pitch >75 Degree means lifted???
           newCmdIdx = 1;
         }
         hold = 10;
       }
+
       // recover
       else if (hold) {
         if (hold == 10) {
@@ -271,9 +299,10 @@ void checkBodyMotion()  {
           meow();
         }
       }
-      //calculate deviation
-      for (byte i = 0; i < 2; i++) {
-        RollPitchDeviation[i] = ypr[2 - i] - motion.expectedRollPitch[i];
+      
+      //calculate deviation of actual versus expected ypr
+      for (byte i = 0; i < 2; i++) { // counts 0, 1
+        RollPitchDeviation[i] = ypr[2 - i] - motion.expectedRollPitch[i]; // compare gyro data with excpected roll and pitch
         //PTL(RollPitchDeviation[i]);
         RollPitchDeviation[i] = sign(ypr[2 - i]) * max(fabs(RollPitchDeviation[i]) - levelTolerance[i], 0);//filter out small angles
       }
@@ -282,7 +311,11 @@ void checkBodyMotion()  {
   }
 }
 
+
+// arduino setup function
 void setup() {
+  
+  // set Buzzer pin to output mode
   pinMode(BUZZER, OUTPUT);
   // join I2C bus (I2Cdev library doesn't do this automatically)
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
@@ -293,16 +326,18 @@ void setup() {
   Fastwire::setup(400, true);
 #endif
 
-  Serial.begin(57600);
+  Serial.begin(57600); // set serial communication speed to 57600 bits per second
   Serial.setTimeout(10);
   while (!Serial);
   // wait for ready
   while (Serial.available() && Serial.read()); // empty buffer
   delay(100);
   PTLF("\n* Start *");
-  PTLF("Initialize I2C");
+  PTLF("Initialize I2C");  // I2C is the Serial communication bus
   PTLF("Connect MPU6050");
   mpu.initialize();
+  
+  // test connection to gyro
   //do
   {
     delay(500);
@@ -314,10 +349,10 @@ void setup() {
   // load and configure the DMP
   do {
     PTLF("Initialize DMP");
-    devStatus = mpu.dmpInitialize();
+    devStatus = mpu.dmpInitialize(); // returns 0 if all good
     delay(500);
+    
     // supply your own gyro offsets here, scaled for min sensitivity
-
     for (byte i = 0; i < 4; i++) {
       PT(EEPROMReadInt(MPUCALIB + 4 + i * 2));
       PT(" ");
@@ -327,6 +362,7 @@ void setup() {
     mpu.setXGyroOffset(EEPROMReadInt(MPUCALIB + 6));
     mpu.setYGyroOffset(EEPROMReadInt(MPUCALIB + 8));
     mpu.setZGyroOffset(EEPROMReadInt(MPUCALIB + 10));
+
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
       // turn on the DMP, now that it's ready
@@ -344,6 +380,8 @@ void setup() {
 
       // get expected DMP packet size for later comparison
       packetSize = mpu.dmpGetFIFOPacketSize();
+    
+    // something went wrong in MPU setup
     } else {
       // ERROR!
       // 1 = initial memory load failed
@@ -354,23 +392,25 @@ void setup() {
       PTLF(")");
       PTL();
     }
-  } while (devStatus);
+  } while (devStatus); // keep running while its above 0
 
-  //opening music
+  
+  // play opening music
 #if WALKING_DOF == 8
   playMelody(MELODY);
 #endif
 
-  //IR
+  // Start IR Receiver
   {
     //PTLF("IR Receiver Button Decode");
     irrecv.enableIRIn(); // Start the receiver
   }
 
+  // tell EEPROM where to find motion sequences (skills) for legs
   assignSkillAddressToOnboardEeprom();
   PTL();
 
-  // servo
+  // start pwm for servo
   { pwm.begin();
 
     pwm.setPWMFreq(60 * PWM_FACTOR); // Analog servos run at ~60 Hz updates
@@ -379,8 +419,8 @@ void setup() {
     //meow();
     strcpy(lastCmd, "rest");
     motion.loadBySkillName("rest");
-    for (int8_t i = DOF - 1; i >= 0; i--) {
-      pulsePerDegree[i] = float(PWM_RANGE) / servoAngleRange(i);
+    for (int8_t i = DOF - 1; i >= 0; i--) { // count down from 7 to 0
+      pulsePerDegree[i] = float(PWM_RANGE) / servoAngleRange(i); // get pulses required for 1 degree movement of servo
       servoCalibs[i] = servoCalib(i);
       calibratedDuty0[i] =  SERVOMIN + PWM_RANGE / 2 + float(middleShift(i) + servoCalibs[i]) * pulsePerDegree[i]  * rotationDirection(i) ;
       //PTL(SERVOMIN + PWM_RANGE / 2 + float(middleShift(i) + servoCalibs[i]) * pulsePerDegree[i] * rotationDirection(i) );
@@ -395,14 +435,21 @@ void setup() {
 
   pinMode(BATT, INPUT);
   pinMode(VCC, OUTPUT);
+
+  /* Check the Ultrasound Sensor */
+
+  // trigger and echo pins are connected to the ultrasound sensor
   pinMode(TRIGGER, OUTPUT); // Sets the trigPin as an Output
   pinMode(ECHO, INPUT); // Sets the echoPin as an Input
-  digitalWrite(VCC, HIGH);
+
+  digitalWrite(VCC, HIGH); // set the VCC pin to high, starting ultrasound module power supply
   int t = 0;
   int minDist, maxDist;
   while (0) {//disabled for now. needs virtual threading to reduce lag in motion.
-    calibratedPWM(0, -10 * cos(t++*M_PI / 360));
-    calibratedPWM(1, 10 * sin(t++ * 2 * M_PI / 360));
+    
+    // move the legs
+    calibratedPWM(0, -10 * cos(t++*M_PI / 360)); // move motor 0
+    calibratedPWM(1, 10 * sin(t++ * 2 * M_PI / 360)); // move motor 1
     digitalWrite(TRIGGER, LOW);
     delayMicroseconds(2);
 
@@ -414,11 +461,9 @@ void setup() {
     digitalWrite(BUZZER, LOW);
 
     // Reads the echoPin, returns the sound wave travel time in microseconds
-
     long duration = pulseIn(ECHO, HIGH, farTime);
 
     // Calculating the distance
-
     int distance = duration * 0.034 / 2; // 10^-6 * 34000 cm/s
 
     // Prints the distance on the Serial Monitor
@@ -429,8 +474,11 @@ void setup() {
   meow();
 }
 
+// arduimo control loop, runs at clockspeed of processor?
 void loop() {
-  float voltage = analogRead(BATT);
+
+  float voltage = analogRead(BATT); // check voltage on the battery pin
+
   if (voltage <
 #ifdef NyBoard_V0_1
       650
@@ -444,13 +492,15 @@ void loop() {
     PTL(voltage);//relative voltage
     meow();
   }
+
+  // if voltage not too low
   else {
     newCmd[0] = '\0';
     newCmdIdx = 0;
     // MPU block
 #ifdef GYRO //if opt out the gyro, the calculation can be really fast
     if (checkGyro && countDown == 0)
-      checkBodyMotion();
+      checkBodyMotion(); // check gyro data
 #endif
     // accident block
     //...
@@ -459,17 +509,25 @@ void loop() {
 
     // input block
     //else if (t == 0) {
+    
+    // if the IR receiver has received data
     if (irrecv.decode(&results)) {
-      String IRsig = translateIR();
+      
+      String IRsig = translateIR(); // convert IR hex code to command string
+      
       if (IRsig != "") {
         strcpy(newCmd, IRsig.c_str());
+        
+        // take action based on command string
         if (!strcmp(newCmd, "d"))
           token = 'd';
+        
         else if (!strcmp(newCmd, "tb")) {
           if (checkGyro)
             countDown = 4;
           checkGyro = !checkGyro;
         }
+        
         else if (!strcmp(newCmd, "hi")) {
           motion.loadBySkillName("sit");
           transform( motion.dutyAngles);
@@ -487,6 +545,7 @@ void loop() {
           transform( motion.dutyAngles);
           strcpy(newCmd, "rest");
         }
+        
         else if (!strcmp(newCmd, "rc")) {
           char **bList = new char*[10];
           bList[0] = "rc1";
@@ -506,6 +565,7 @@ void loop() {
           delete []bList;
 
         }
+        
         else if (!strcmp(newCmd, "pu")) {
           char **bList = new char*[2];
           bList[0] = "pu1";
@@ -518,6 +578,7 @@ void loop() {
           meow();
           delete []bList;
         }
+        
         else
           token = 'k';
         newCmdIdx = 2;
@@ -564,7 +625,7 @@ void loop() {
         case 'l': //list of all 16 joint: angle0, angle2,... angle15
           //case 'o': //for melody
           {
-            String inBuffer = Serial.readStringUntil('~');
+            String inBuffer = Serial.readStringUntil('~'); // reads the argument from serial until ~
             int8_t numArg = inBuffer.length();
             char* list = inBuffer.c_str();
             if (token == 'i') {
@@ -577,20 +638,20 @@ void loop() {
             }
             break;
           }
-        case 'j': { //show the list of current joint anles
+        case 'j': { //show the list of current joint angles
             printList((int8_t*)currentAng);
             break;
           }
         case 'c': //calibration
         case 'm': //move joint to angle
-        case 'u': //meow (repeat, increament)
+        case 'u': //meow (repeat, increment)
         case 'b': //beep(tone, duration): tone 0 is pause, duration range is 0~255
           {
             int8_t target[2] = {};
             String inBuffer = Serial.readStringUntil('\n');
             byte inLen = 0;
             strcpy(newCmd, inBuffer.c_str());
-            char *pch;
+            char *pch; // ?
             pch = strtok (newCmd, " ,");
             for (byte c = 0; pch != NULL; c++)
             {
@@ -598,6 +659,8 @@ void loop() {
               pch = strtok (NULL, " ,");
               inLen++;
             }
+            
+            // calibration
             if (token == 'c') {
               //PTLF("calibrating [ targetIdx, angle ]: ");
               if (strcmp(lastCmd, "c")) { //first time entering the calibration function
@@ -615,18 +678,26 @@ void loop() {
               printList(servoCalibs);
               yield();
             }
+
+            // move joint to angle
             else if (token == 'm') {
               //SPF("moving [ targetIdx, angle ]: ");
               motion.dutyAngles[target[0]] = currentAng[target[0]] = target[1];
             }
+
+            //meow
             else if (token == 'u') {
               meow(target[0], 0, 50, 200, 1 + target[1]);
             }
+
+            // beep
             else if (token == 'b') {
               beep(target[0], (byte)target[1]);
             }
+
             PT(token);
             printList(target, 2);
+
             if (token == 'c' || token == 'm') {
               int duty = SERVOMIN + PWM_RANGE / 2 + float(middleShift(target[0])  + servoCalibs[target[0]] + motion.dutyAngles[target[0]]) * pulsePerDegree[target[0]] * rotationDirection(target[0]);
               pwm.setPWM(pin(target[0]), 0,  duty);
@@ -639,6 +710,7 @@ void loop() {
           }
       }
       while (Serial.available() && Serial.read()); //flush the remaining serial buffer in case the commands are parsed incorrectly
+      
       //check above
       if (strcmp(newCmd, "") && strcmp(newCmd, lastCmd) ) {
         //      PT("compare lastCmd ");
