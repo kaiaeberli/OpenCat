@@ -301,6 +301,7 @@ void checkBodyMotion()  {
       }
       
       //calculate deviation of actual versus expected ypr
+      // this is used for compensation in the balancing algo!!
       for (byte i = 0; i < 2; i++) { // counts 0, 1
         RollPitchDeviation[i] = ypr[2 - i] - motion.expectedRollPitch[i]; // compare gyro data with excpected roll and pitch
         //PTL(RollPitchDeviation[i]);

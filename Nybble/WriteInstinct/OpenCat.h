@@ -610,6 +610,8 @@ float levelTolerance[2] = {ROLL_LEVEL_TOLERANCE * radPerDeg, PITCH_LEVEL_TOLERAN
 
 //the following coefficients will be divided by 10.0 in the adjust() function. so (float) 0.1 can be saved as (int8_t) 1
 //this trick allows using int8_t array insead of float array, saving 96 bytes and allows storage on EEPROM
+
+// are these balancing compensation factors for roll and pitch for upper and lower leg?
 #define panF 60
 #define tiltF 60
 #define sRF 50   //shoulder roll factor
@@ -625,12 +627,14 @@ float levelTolerance[2] = {ROLL_LEVEL_TOLERANCE * radPerDeg, PITCH_LEVEL_TOLERAN
 float postureOrWalkingFactor;
 #endif
 
+
+// these are used for the balancing algo
 #ifdef X_LEG // cross legged - Nybble
 int8_t adaptiveParameterArray[16][NUM_ADAPT_PARAM] = {
-  { -panF, 0}, { -panF, -tiltF}, { -2 * panF, 0}, {0, 0},
-  {sRF, -sPF}, { -sRF, -sPF}, { -sRF, sPF}, {sRF, sPF},
-  {uRF, uPF}, {uRF, uPF}, { -uRF, uPF}, { -uRF, uPF},
-  {lRF, lPF}, {lRF, lPF}, { -lRF, lPF}, { -lRF, lPF}
+  { -panF, 0}, { -panF, -tiltF}, { -2 * panF, 0}, {0, 0}, // head, head, tail, tail
+  {sRF, -sPF}, { -sRF, -sPF}, { -sRF, sPF}, {sRF, sPF}, // shoulder roll...
+  {uRF, uPF}, {uRF, uPF}, { -uRF, uPF}, { -uRF, uPF}, // upper legs
+  {lRF, lPF}, {lRF, lPF}, { -lRF, lPF}, { -lRF, lPF} // lower legs
 };
 #else // >> leg - Bittle
 int8_t adaptiveParameterArray[16][NUM_ADAPT_PARAM] = {
@@ -644,14 +648,19 @@ int8_t adaptiveParameterArray[16][NUM_ADAPT_PARAM] = {
 float RollPitchDeviation[2];
 int8_t slope = 1;
 
+
+// reads the adaptive param array from EEPROM (saved during calibration)
 inline int8_t adaptiveCoefficient(byte idx, byte para) {
   return EEPROM.read(ADAPT_PARAM + idx * NUM_ADAPT_PARAM + para);
 }
 
 // balancing algorithm - calculates an angle offset to the required motor angles as per programmed motion sequence
+// i = joint index
 float adjust(byte i) {
   // i = joint index
   float rollAdj, pitchAdj;
+
+  // check which joint index we are adjusting
   if (i == 1 || i > 3)  {//check idx = 1
     bool leftQ = (i - 1 ) % 4 > 1 ? true : false;
     //bool frontQ = i % 4 < 2 ? true : false;
@@ -659,6 +668,7 @@ float adjust(byte i) {
     float leftRightFactor = 1;
     
     // deals with roll (i.e. left, right)
+    // check how much roll and pitch is deviating from the expected values, as per motion sequence definition
     if ((leftQ && RollPitchDeviation[0]*slope  > 0 )
         || ( !leftQ && RollPitchDeviation[0]*slope  < 0))
       leftRightFactor = LEFT_RIGHT_FACTOR;
@@ -714,17 +724,24 @@ void shutServos() {
 // speed ratio: how fast to get there, ie how many degrees per step
 // target: target angles
 // curentAng: current leg angles
+// offset: joint offset (joint 0 is head, not leg)
 // see here: https://www.petoi.com/forum/software/opencat-tools
 void transform( char * target,  float speedRatio = 1, byte offset = 0) {
   char *diff = new char[DOF - offset], maxDiff = 0;
   
   // count between offset and DOF
   for (byte i = offset; i < DOF; i++) {
-    diff[i - offset] =   currentAng[i] - target[i - offset];
-    maxDiff = max(maxDiff, abs( diff[i - offset])); // difference in degrees
+    diff[i - offset] =   currentAng[i] - target[i - offset]; // difference between current and target angle
+    maxDiff = max(maxDiff, abs( diff[i - offset])); // difference is in degrees
   }
-  byte steps = byte(round(maxDiff / 1.0/*degreeStep*/ / speedRatio));//default speed is 1 degree per step
+  
+  //default speed is 1 step for each degree we need to turn
+  byte steps = byte(round(maxDiff / 1.0/*degreeStep*/ / speedRatio));
+  
+  // move motor in steps towards target angle
   for (byte s = 0; s <= steps; s++)
+    
+    // for each leg
     for (byte i = offset; i < DOF; i++) {
       float dutyAng = (target[i - offset] + (steps == 0 ? 0 : (1 + cos(M_PI * s / steps)) / 2 * diff[i - offset]));
       calibratedPWM(i,  dutyAng);

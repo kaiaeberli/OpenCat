@@ -31,11 +31,15 @@
 #include "OpenCat.h"
 #define INSTINCT_SKETCH
 
+
+// save gyro calibration
 void saveMPUcalib(int * var) {
-  for (byte i = 0; i < 6; i++)
+  for (byte i = 0; i < 6; i++) // x, y, z, roll, pitch, yaw
     EEPROM.update(MPUCALIB + i, var[i]);
 }
 
+
+// write constants to EEPROM
 void writeConst() {
   EEPROM.update(MELODY, sizeof(melody));
   for (byte i = 0; i < sizeof(melody); i++)
@@ -157,8 +161,8 @@ void saveSkillInfoFromProgmemToOnboardEeprom() {
 
 ///////////////////////////////////   CONFIGURATION   /////////////////////////////
 //Change this 3 variables if you want to fine tune the skecth to your needs.
-int discard = 100;
-int buffersize = 1000;   //Amount of readings used to average, make it higher to get more precision but sketch will be slower  (default:1000)
+int discard = 100; // first x number of gyro measurements to discard when calibrating
+int buffersize = 1000;   //Amount of gyro readings used to average, make it higher to get more precision but sketch will be slower  (default:1000)
 int acel_deadzone = 8;   //Acelerometer error allowed, make it lower to get more precision, but sketch may not converge  (default:8)
 int giro_deadzone = 1;   //Giro error allowed, make it lower to get more precision, but sketch may not converge  (default:1)
 
@@ -172,16 +176,16 @@ MPU6050 mpu(0x68); // <-- use for AD0 high
 
 byte stage = 0;
 char choice;
-int ag[6];      //int16_t ax, ay, az, gx, gy, gz;
-int agMean[6];  //mean_ax, mean_ay, mean_az, mean_gx, mean_gy, mean_gz;
-int agOffset[6];  //ax_offset, ay_offset, az_offset, gx_offset, gy_offset, gz_offset;
+int ag[6];      //int16_t ax, ay, az, gx, gy, gz;  ag = accelerometer, gyro
+int agMean[6];  //mean observed gyro measurments: mean_ax, mean_ay, mean_az, mean_gx, mean_gy, mean_gz;
+int agOffset[6];  //gyro offset required to zero: ax_offset, ay_offset, az_offset, gx_offset, gy_offset, gz_offset;
 int mpuOffset[6];
 uint8_t timer = 0;
 #define SKIP 3
 #ifdef SKIP
 byte updateFrame = 0;
 #endif
-byte firstValidJoint;
+byte firstValidJoint; //  first leg joint (not head, tail, shoulder roll)
 char token;
 #define CMD_LEN 10
 char lastCmd[CMD_LEN] = {};
@@ -191,6 +195,7 @@ byte jointIdx = 0;
 bool printMPU = false;
 
 
+// Arduiono sketch setup function
 void setup() {
   // join I2C bus (I2Cdev library doesn't do this automatically)
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
@@ -210,14 +215,17 @@ void setup() {
     PT("\t");
     }
     PTL();*/
+
   beep(100, 50);
+
   // initialize device
   mpu.initialize();
 
-  // wait for ready
-  while (Serial.available() && Serial.read()); // empty buffer
+  // wait for Serial ready
+  while (Serial.available() && Serial.read()); // empty Serial buffer
   PTLF("\n* Change the \"V0_*\" in \"#define NyBoard_V0_1\" in Instinct.h according to your NyBoard version!");
   PTLF("\n* OpenCat Writing Constants to EEPROM...");
+
   writeConst(); // only run for the first time when writing to the board.
   beep(30);
   saveSkillInfoFromProgmemToOnboardEeprom();
@@ -227,9 +235,10 @@ void setup() {
   { pwm.begin();
     pwm.setPWMFreq(60 * PWM_FACTOR); // Analog servos run at ~60 Hz updates
     delay(200);
-    strcpy(lastCmd, "rest");
+    strcpy(lastCmd, "rest"); // update last called command string
     motion.loadBySkillName("rest");
     for (byte i = 0; i < DOF; i++) {
+
       pulsePerDegree[i] = float(PWM_RANGE) / servoAngleRange(i);
       servoCalibs[i] = servoCalib(i);
       calibratedDuty0[i] =  SERVOMIN + PWM_RANGE / 2 + float(middleShift(i) + servoCalibs[i]) * pulsePerDegree[i]  * rotationDirection(i) ;
@@ -244,6 +253,8 @@ void setup() {
   while (!Serial.available());
   choice = Serial.read();
   PTLF("Gotcha!");
+  
+  //Set all gyro offsets to 0
   if (choice == 'Y') {
     PTLF("\n* MPU6050 Calibration Routine");
     delay(1000);
@@ -260,12 +271,16 @@ void setup() {
   }
 }
 
+
+// Arduino control loop, runs after setup?
 void loop() {
+
+  // determine what calibration stage we are at...
 
   if (choice == 'Y') {
     if (stage == 0) {
-      PTLF("\nReading sensors for first time...");
-      meansensors();
+      PTLF("\nReading gyro sensors for first time...");
+      meansensors(); // get their mean value in current position
       stage++;
       delay(1000);
     }
@@ -273,21 +288,22 @@ void loop() {
     if (stage == 1) {
       PTLF("\nYour MPU6050 should be placed in horizontal position, with package letters facing up.");
       PTLF("Don't touch it until all six numbers appear. You should hear a long beep followed by a Meooow!");
-      calibration();
+      calibration(); // calibrate (zeroeing) gyro with mean values determined in stage 0
       stage++;
       delay(1000);
     }
 
+    // save calibrated gyro offsets to EEPROM
     if (stage == 2) {
-      meansensors();
+      meansensors(); // get mean again
       PTLF("FINISHED!");
       PTLF("\nData is printed as:\t\tacelX\tacelY\tacelZ\tgiroX\tgiroY\tgiroZ");
       PTLF("Readings should be close to:\t0\t0\t16384\t0\t0\t0");
 
-      PTF("Sensor readings with offsets:\t");
+      PTF("Gyro Sensor readings with offsets:\t");
       printList(agMean, 6);
 
-      PTF("Your calibration offsets:\t");
+      PTF("Your gyro calibration offsets:\t");
       printList(agOffset, 6);
 
       PTLF("The offsets are saved and automatically sent to mpu.setXAccelOffset(yourOffset)\n");
@@ -310,9 +326,9 @@ void loop() {
 
   char cmd[CMD_LEN] = {};
   byte newCmd = 0;
-  if (Serial.available() > 0) {
+  if (Serial.available() > 0) { // if serial has sth waiting?
     token = Serial.read();
-    newCmd = 3;
+    newCmd = 3; // why 3 not 1?
   }
   if (newCmd) {
     beep(newCmd * 10);
@@ -413,7 +429,7 @@ void loop() {
         // if posture, start jointIdx from 0
         // if gait, walking DOF = 8, start jointIdx from 8
         //          walking DOF = 12, start jointIdx from 4
-        firstValidJoint = (motion.period == 1) ? 0 : DOF - WALKING_DOF;
+        firstValidJoint = (motion.period == 1) ? 0 : DOF - WALKING_DOF; 
         jointIdx = firstValidJoint;
         transform( motion.dutyAngles, 1, firstValidJoint);
         if (!strcmp(cmd, "rest")) {
@@ -437,6 +453,9 @@ void loop() {
     }
 
     if (token == 'k') {
+
+
+      // this keeps increasing joint index if head, tail or shoulder roll is undefined
       // if (lastCmd[0] == 'm' && lastCmd[1] == 'r')
 #ifndef HEAD  //skip head
       if (jointIdx == 0)
@@ -465,7 +484,7 @@ void loop() {
         if (updateFrame++ == SKIP) {
           updateFrame = 0;
 #endif
-          timer = (timer + 1) % motion.period;
+          timer = (timer + 1) % motion.period; // what does this do?
 #ifdef SKIP
         }
 #endif
@@ -474,17 +493,28 @@ void loop() {
   }
 }
 
+
+
+
+// calculate gyro sensor mean value over a range of measurements
+// store in agMean array
 void meansensors() {
   long i = 0;
+
+  // initialise some buffers to 0
   long * agBuff = new long[6] {0, 0, 0, 0, 0, 0}; //buff_ax = 0, buff_ay = 0, buff_az = 0, buff_gx = 0, buff_gy = 0, buff_gz = 0;
 
+  
+  // read gyro data a number of times
   while (i < (buffersize + discard + 1)) {
     // read raw accel/gyro measurements from device
     mpu.getMotion6(ag, ag + 1, ag + 2, ag + 3, ag + 4, ag + 5);
 
+    // if i > discard_threshold && i <= (buffersize + discard_threshold)
     if (i > discard && i <= (buffersize + discard)) { //First 100 measures are discarded
       for (byte i = 0; i < 6; i++)
-        agBuff[i] += ag[i];
+        // keep adding measurement to buffer - will divide by number of iterations later to get mean
+        agBuff[i] += ag[i]; 
       /*
         //replacing the following codes
         buff_ax = buff_ax + ax;
@@ -494,8 +524,12 @@ void meansensors() {
         buff_gy = buff_gy + gy;
         buff_gz = buff_gz + gz;*/
     }
+    
+    // once we are at buffer size, discarding first 100 measurements
     if (i == (buffersize + discard)) {
       for (byte i = 0; i < 6; i++)
+        // calculate mean value for each gyro measurement in this position
+        // assuming we are in the rest position, so gyro is parallel to the floor?
         agMean[i] = agBuff[i] / buffersize;
       /*mean_ax = buff_ax / buffersize;
         mean_ay = buff_ay / buffersize;
@@ -510,8 +544,13 @@ void meansensors() {
   delete [] agBuff;
 }
 
+
+// calibrate the gyro with mean values of sensors measured at rest position
 void calibration() {
   for (int i = 0; i < 6; i++) {
+
+    // calculate required sensor offset based on observed means
+    // why divided by 8?
     agOffset[i] = ((i == 2 ? 16384 : 0) - agMean[i]) / 8; //agOffset[2] is az_offset
 
     /*
@@ -524,7 +563,11 @@ void calibration() {
       gy_offset = -mean_gy / 4;
       gz_offset = -mean_gz / 4;*/
   }
+
+
   while (1) {
+
+    // set gyro offsets
     int ready = 0;
     mpu.setXAccelOffset(agOffset[0]);
     mpu.setYAccelOffset(agOffset[1]);
@@ -541,20 +584,31 @@ void calibration() {
       mpu.setYGyroOffset(gy_offset);
       mpu.setZGyroOffset(gz_offset);*/
 
+    // measure mean gyro observation again, now the new offsets will be used
     meansensors();
 
+    
+
     for (int i = 0; i < 6; i++) {
+      
+      // get gyro or accel tolerances
       int tolerance = (i < 3) ? acel_deadzone : giro_deadzone;
+      
+      // if mean below tolerance beep
       if (abs((i == 2 ? 16384 : 0) - agMean[i]) <= tolerance) {
         PT(i + 1);
         beep(i * 2 + (i == 3 ? 0 : 1), 100, 10); // note F to G takes half tone
         ready++;
       }
+      
+      // if not, change offset by reducing it by mean / 3 or tolerance
       else {
         PT('.');
         agOffset[i] -= (agMean[i] - (i == 2 ? 16384 : 0)) / (tolerance == 1 ? 3 : tolerance);
       }
     }
+    
+
     PTL();
     for (int i = 0; i < 6; i++) {
       PT(agOffset[i]);
@@ -624,6 +678,7 @@ void calibration() {
           }
     */
 
+    // if all 6 sensors have been offset to be within tolerance, beep and end execution
     if (ready == 6) {
       delay(500);
       beep(100, 1000);
