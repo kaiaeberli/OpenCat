@@ -3,6 +3,21 @@
 #define NUM_SKILLS 43
 #define I2C_EEPROM
 
+/*
+
+motion sequence value order:
+
+nb of frames, roll, pitch, 
+motor1, motor2, motor3... motor 8,
+motor1, motor2, motor3... motor 8,
+motor1, motor2, motor3... motor 8,
+motor1, motor2, motor3... motor 8,
+...
+
+angles are between -90 and 90
+
+*/
+
 const char bd[] PROGMEM = { 
 30, 0, 0,
  39, 39,-80,-80, 20, 20, 47, 47,
@@ -536,6 +551,7 @@ const char wkR[] PROGMEM = {
  12, 54,-50,-50, 23, 11, -5,-13,
 };
 
+// postures
 const char balance[] PROGMEM = { 
 1, 0, 0,
   0,  0,  0,  0,  0,  0,  0,  0, 30, 30,-30,-30, 30, 30,-30,-30,};
@@ -624,6 +640,7 @@ const char zero[] PROGMEM = {
 #if !defined(MAIN_SKETCH) || !defined(I2C_EEPROM)
 		//if it's not the main sketch to save data or there's no external EEPROM, 
 		//the list should always contain all information.
+  // suffix I = instinct, suffix N = newbility
   const char* skillNameWithType[]={"bdI","bkI","bkLI","bkRI","crI","crLI","crRI","lyI","trI","trLI","trRI","vtI","wkI","wkLI","wkRI","balanceI","buttUpI","calibI","cd1I","cd2I","droppedI","hiI","hi2I","liftedI","peeI","pee1I","pu1I","pu2I","rc1I","rc10I","rc2I","rc3I","rc4I","rc5I","rc6I","rc7I","rc8I","rc9I","restI","sitI","sleepI","strI","zeroI",};
   const char* progmemPointer[] = {bd, bk, bkL, bkR, cr, crL, crR, ly, tr, trL, trR, vt, wk, wkL, wkR, balance, buttUp, calib, cd1, cd2, dropped, hi, hi2, lifted, pee, pee1, pu1, pu2, rc1, rc10, rc2, rc3, rc4, rc5, rc6, rc7, rc8, rc9, rest, sit, sleep, str, zero, };
 #else	//only need to know the pointers to newbilities, because the intuitions have been saved onto external EEPROM,

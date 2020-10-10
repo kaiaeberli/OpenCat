@@ -122,6 +122,8 @@ void beep(int8_t note, float duration = 10, int pause = 0, byte repeat = 1 ) {
     delay(pause);
   }
 }
+
+
 void playMelody(int start) {
   byte len = (byte)EEPROM.read(start) / 2;
   for (int i = 0; i < len; i++)
@@ -140,7 +142,7 @@ void meow(int repeat = 0, int pause = 200, int startF = 50,  int endF = 200, int
   }
 }
 
-// motor pin definitions
+// motor pin definitions - unused??
 #ifdef NyBoard_V0_1
 byte pins[] = {7, 0, 8, 15,
                6, 1, 14, 9,
@@ -161,7 +163,7 @@ byte pins[] = {4, 3, 11, 12,
   #define HEAD
   #define TAIL
   #define X_LEG
-  #define WALKING_DOF 8
+  #define WALKING_DOF 8 // 4 legs, each has 2 motors so 8 degree of freedom
 
 #else
 #ifdef BIT
@@ -171,7 +173,7 @@ byte pins[] = {4, 3, 11, 12,
 #endif
 #endif
 
-//remap pins for different walking modes, pin4 ~ pin15
+//remap pins for different walking modes, pin4 ~ pin15 - unused??
 byte fast[] = {
   4, 4, 7, 7,
   8, 8, 11, 11,
@@ -214,7 +216,7 @@ byte right[] = {
 // then followed by i(nstinct) on progmem, or n(ewbility) on progmem
 
 //servo constants
-#define DOF 16
+#define DOF 16 // why 16 - 8 for the legs, where do the other 8 come from?
 #define PWM_FACTOR 4
 #define MG92B_MIN 170*PWM_FACTOR // pulse length min out of 4096
 #define MG92B_MAX 550*PWM_FACTOR
@@ -391,12 +393,14 @@ void copyDataFromPgmToI2cEeprom(unsigned int &eeAddress, unsigned int pgmAddress
   SkillList skillList;
 */
 
+
+// holds angles for each frame of a motion sequence that corresponds to a skill
 class Motion {
   public:
     byte pins[DOF];
-    uint8_t period;
+    uint8_t period; // length, in number of frames, of the motion sequence
     float expectedRollPitch[2];
-    char* dutyAngles;
+    char* dutyAngles; // angles of the motion sequence
     Motion() {
       period = 0;
       expectedRollPitch[0] = 0;
@@ -404,37 +408,47 @@ class Motion {
       dutyAngles = NULL;
     }
 
+    // get EEPROM address from skill name
     int lookupAddressByName(char* skillName) {
       int skillAddressShift = 0;
+      
+      // check all skill addresses for name match
       for (byte s = 0; s < NUM_SKILLS; s++) {//save skill info to on-board EEPROM, load skills to SkillList
-        byte nameLen = EEPROM.read(SKILLS + skillAddressShift++);
-        char* readName = new char[nameLen + 1];
-        for (byte l = 0; l < nameLen; l++) {
+        byte nameLen = EEPROM.read(SKILLS + skillAddressShift++); // figure out skill name length
+        char* readName = new char[nameLen + 1]; // create char array of skill name length
+        for (byte l = 0; l < nameLen; l++) { // read each char of skill name 
           readName[l] = EEPROM.read(SKILLS + skillAddressShift++);
         }
         readName[nameLen] = '\0';
+        
+        // return address if skill found
         if (!strcmp(readName, skillName)) {
           delete[]readName;
           return SKILLS + skillAddressShift;
         }
         delete[]readName;
-        skillAddressShift += 3;//1 byte type, 1 int address
+        skillAddressShift += 3;//1 byte type, 1 int address => shift by 3 bit
       }
       PTLF("wrong key!");
       return -1;
     }
+
+    // read motion frames from progmem
+    // it is a combination of expected roll and pitch while moving, and the angles of the legs.
     void loadDataFromProgmem(unsigned int pgmAddress) {
       period = pgm_read_byte(pgmAddress);//automatically cast to char*
       for (int i = 0; i < 2; i++)
         expectedRollPitch[i] = radPerDeg * (int8_t)pgm_read_byte(pgmAddress + 1 + i);
-      byte frameSize = period > 1 ? WALKING_DOF : 16;
-      int len = period * frameSize;
+      byte frameSize = period > 1 ? WALKING_DOF : 16; // frame = one set of angles for legs, part of a motion sequence
+      int len = period * frameSize; // total number of angles in a motion sequence
       //delete []dutyAngles; //check here
       dutyAngles = new char[len];
       for (int k = 0; k < len; k++) {
         dutyAngles[k] = pgm_read_byte(pgmAddress + SKILL_HEADER + k);
       }
     }
+
+    // read motion sequence from EEPROM address into dutyAngles array
     void loadDataFromI2cEeprom(unsigned int &eeAddress) {
       Wire.beginTransmission(DEVICE_ADDRESS);
       Wire.write((int)((eeAddress) >> 8));   // MSB
@@ -501,6 +515,7 @@ class Motion {
         }
     */
 
+    // print angles in frame sequence of loaded skill
     void info() {
       PTL("period: " + String(period) + ",\tdelayBetweenFrames: " + ",\texpected (pitch,roll): (" + expectedRollPitch[0]*degPerRad + "," + expectedRollPitch[1]*degPerRad + ")");
       for (int k = 0; k < period * (period > 1 ? WALKING_DOF : 16); k++) {
@@ -585,10 +600,14 @@ inline int8_t servoCalib(byte idx) {
 }
 
 // balancing parameters
-#define ROLL_LEVEL_TOLERANCE 2//the body is still considered as level, no angle adjustment
+#define ROLL_LEVEL_TOLERANCE 2// at this value, the body is still considered as level, no angle adjustment
 #define PITCH_LEVEL_TOLERANCE 1
+
+// store tolerance for roll and pitch in radians
 float levelTolerance[2] = {ROLL_LEVEL_TOLERANCE * radPerDeg, PITCH_LEVEL_TOLERANCE * radPerDeg}; //the body is still considered as level, no angle adjustment
 #define LARGE_PITCH 75
+
+
 //the following coefficients will be divided by 10.0 in the adjust() function. so (float) 0.1 can be saved as (int8_t) 1
 //this trick allows using int8_t array insead of float array, saving 96 bytes and allows storage on EEPROM
 #define panF 60
@@ -606,14 +625,14 @@ float levelTolerance[2] = {ROLL_LEVEL_TOLERANCE * radPerDeg, PITCH_LEVEL_TOLERAN
 float postureOrWalkingFactor;
 #endif
 
-#ifdef X_LEG
+#ifdef X_LEG // cross legged - Nybble
 int8_t adaptiveParameterArray[16][NUM_ADAPT_PARAM] = {
   { -panF, 0}, { -panF, -tiltF}, { -2 * panF, 0}, {0, 0},
   {sRF, -sPF}, { -sRF, -sPF}, { -sRF, sPF}, {sRF, sPF},
   {uRF, uPF}, {uRF, uPF}, { -uRF, uPF}, { -uRF, uPF},
   {lRF, lPF}, {lRF, lPF}, { -lRF, lPF}, { -lRF, lPF}
 };
-#else // >> leg
+#else // >> leg - Bittle
 int8_t adaptiveParameterArray[16][NUM_ADAPT_PARAM] = {
   { -panF, 0}, { -panF / 2, -tiltF}, { -2 * panF, 0}, {0, 0},
   {sRF, -sPF}, { -sRF, -sPF}, { -sRF, sPF}, {sRF, sPF},
@@ -624,17 +643,22 @@ int8_t adaptiveParameterArray[16][NUM_ADAPT_PARAM] = {
 
 float RollPitchDeviation[2];
 int8_t slope = 1;
+
 inline int8_t adaptiveCoefficient(byte idx, byte para) {
   return EEPROM.read(ADAPT_PARAM + idx * NUM_ADAPT_PARAM + para);
 }
 
+// balancing algorithm - calculates an angle offset to the required motor angles as per programmed motion sequence
 float adjust(byte i) {
+  // i = joint index
   float rollAdj, pitchAdj;
   if (i == 1 || i > 3)  {//check idx = 1
     bool leftQ = (i - 1 ) % 4 > 1 ? true : false;
     //bool frontQ = i % 4 < 2 ? true : false;
     //bool upperQ = i / 4 < 3 ? true : false;
     float leftRightFactor = 1;
+    
+    // deals with roll (i.e. left, right)
     if ((leftQ && RollPitchDeviation[0]*slope  > 0 )
         || ( !leftQ && RollPitchDeviation[0]*slope  < 0))
       leftRightFactor = LEFT_RIGHT_FACTOR;
@@ -652,6 +676,7 @@ float adjust(byte i) {
            rollAdj + RollPitchDeviation[1] * adaptiveCoefficient(i, 1) );
 }
 
+// update calibration values
 void saveCalib(int8_t *var) {
   for (byte i = 0; i < DOF; i++) {
     EEPROM.update(CALIB + i, var[i]);
@@ -670,25 +695,33 @@ void calibratedPWM(byte i, float angle) {
   pwm.setPWM(pin(i), 0, duty); // turn servo by angle
 }
 
-// set all motors to angles
+// set all motors to respective angles
 void allCalibratedPWM(char * dutyAng) {
   for (int8_t i = DOF - 1; i >= 0; i--) {
     calibratedPWM(i, dutyAng[i]);
   }
 }
 
+// stop servos
 void shutServos() {
   delay(100);
   for (int8_t i = DOF - 1; i >= 0; i--) {
-    pwm.setPWM(i, 0, 4096);
+    pwm.setPWM(i, 0, 4096); // send pulse high for 0 out of 4096 intervals
   }
 }
 
+// run a skill by setting motors to a list of angles by taking small steps to get there (interpolation)
+// speed ratio: how fast to get there, ie how many degrees per step
+// target: target angles
+// curentAng: current leg angles
+// see here: https://www.petoi.com/forum/software/opencat-tools
 void transform( char * target,  float speedRatio = 1, byte offset = 0) {
   char *diff = new char[DOF - offset], maxDiff = 0;
+  
+  // count between offset and DOF
   for (byte i = offset; i < DOF; i++) {
     diff[i - offset] =   currentAng[i] - target[i - offset];
-    maxDiff = max(maxDiff, abs( diff[i - offset]));
+    maxDiff = max(maxDiff, abs( diff[i - offset])); // difference in degrees
   }
   byte steps = byte(round(maxDiff / 1.0/*degreeStep*/ / speedRatio));//default speed is 1 degree per step
   for (byte s = 0; s <= steps; s++)
@@ -702,6 +735,7 @@ void transform( char * target,  float speedRatio = 1, byte offset = 0) {
   //  PTL();
 }
 
+// load a skill from list, run it, wait, load another skill
 void behavior(int n, char** skill, float *speedRatio, int *pause) {
   for (byte i = 0; i < n; i++) {
     motion.loadBySkillName(skill[i]);

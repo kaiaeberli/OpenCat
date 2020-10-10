@@ -756,7 +756,7 @@ void loop() {
 
     //motion block
     {
-      if (token == 'k') {
+      if (token == 'k') { // k = load skill
         if (jointIdx == DOF) {
 #ifdef SKIP
           if (updateFrame++ == SKIP) {
@@ -785,6 +785,7 @@ void loop() {
 #endif
         }
 
+        // activate head or tail
         if (jointIdx < firstMotionJoint && motion.period > 1) {
           calibratedPWM(jointIdx, (jointIdx != 1 ? offsetLR : 0) //look left or right
                         + 10 * sin (timer * (jointIdx + 2) * M_PI / motion.period) //look around
@@ -793,11 +794,15 @@ void loop() {
 #endif
                        );
         }
+        
+        // activate legs
         else if (jointIdx >= firstMotionJoint) {
-          int dutyIdx = timer * WALKING_DOF + jointIdx - firstMotionJoint;
+          
+          // compute array index to pick up angle required at this stage of motion sequence
+          int dutyIdx = timer * WALKING_DOF + jointIdx - firstMotionJoint; 
           calibratedPWM(jointIdx, motion.dutyAngles[dutyIdx]
 #ifdef GYRO
-                        + adjust(jointIdx)
+                        + adjust(jointIdx) // adjust required joint motor angle if gyro enabled
 #endif
                        );
         }
