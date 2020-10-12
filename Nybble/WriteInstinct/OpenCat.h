@@ -605,13 +605,14 @@ inline int8_t servoCalib(byte idx) {
 
 // store tolerance for roll and pitch in radians
 float levelTolerance[2] = {ROLL_LEVEL_TOLERANCE * radPerDeg, PITCH_LEVEL_TOLERANCE * radPerDeg}; //the body is still considered as level, no angle adjustment
-#define LARGE_PITCH 75
+#define LARGE_PITCH 75 // if pitch exceeds this angle, robot considers itself flipped over, and will try to recover
 
 
 //the following coefficients will be divided by 10.0 in the adjust() function. so (float) 0.1 can be saved as (int8_t) 1
 //this trick allows using int8_t array insead of float array, saving 96 bytes and allows storage on EEPROM
 
 // are these balancing compensation factors for roll and pitch for upper and lower leg?
+// the factors are the P in PID control - they will adjust the joint angles proportional to the current body orientation angles
 #define panF 60
 #define tiltF 60
 #define sRF 50   //shoulder roll factor
@@ -620,15 +621,16 @@ float levelTolerance[2] = {ROLL_LEVEL_TOLERANCE * radPerDeg, PITCH_LEVEL_TOLERAN
 #define uPF 30 //upper leg pitch factor
 #define lRF (-1.5*uRF) //lower leg roll factor 
 #define lPF (-1.5*uPF)//lower leg pitch factor
-#define LEFT_RIGHT_FACTOR 2
+#define LEFT_RIGHT_FACTOR 2 // doubles the angle correction during balancing
 #define FRONT_BACK_FACTOR 2
-#define POSTURE_WALKING_FACTOR 0.5
+#define POSTURE_WALKING_FACTOR 0.5 // this makes the leg balancing adjustment smaller during walking
 #ifdef POSTURE_WALKING_FACTOR
 float postureOrWalkingFactor;
 #endif
 
 
-// these are used for the balancing algo
+// these are used for the balancing algo, they are needed for proportional control (they are angle scalars to counteract loss of balance)
+// first value is roll, second value pitch adjustment factor
 #ifdef X_LEG // cross legged - Nybble
 int8_t adaptiveParameterArray[16][NUM_ADAPT_PARAM] = {
   { -panF, 0}, { -panF, -tiltF}, { -2 * panF, 0}, {0, 0}, // head, head, tail, tail
@@ -646,7 +648,7 @@ int8_t adaptiveParameterArray[16][NUM_ADAPT_PARAM] = {
 #endif
 
 float RollPitchDeviation[2];
-int8_t slope = 1;
+int8_t slope = 1; // why needed - pid control attempt?
 
 
 // reads the adaptive param array from EEPROM (saved during calibration)
@@ -658,11 +660,11 @@ inline int8_t adaptiveCoefficient(byte idx, byte para) {
 // i = joint index
 float adjust(byte i) {
   // i = joint index
-  float rollAdj, pitchAdj;
+  float rollAdj, pitchAdj; // pitch adjustment not used?
 
   // check which joint index we are adjusting
   if (i == 1 || i > 3)  {//check idx = 1
-    bool leftQ = (i - 1 ) % 4 > 1 ? true : false;
+    bool leftQ = (i - 1 ) % 4 > 1 ? true : false; // figures out if joint is on left or right side of cat?
     //bool frontQ = i % 4 < 2 ? true : false;
     //bool upperQ = i / 4 < 3 ? true : false;
     float leftRightFactor = 1;
@@ -671,7 +673,11 @@ float adjust(byte i) {
     // check how much roll and pitch is deviating from the expected values, as per motion sequence definition
     if ((leftQ && RollPitchDeviation[0]*slope  > 0 )
         || ( !leftQ && RollPitchDeviation[0]*slope  < 0))
-      leftRightFactor = LEFT_RIGHT_FACTOR;
+      leftRightFactor = LEFT_RIGHT_FACTOR;// factor 2
+
+    // compute final roll adjustment to maintain balance
+    // example: abs deviation angle from expected * 30 (uRF) * 2
+    // goal is to increase the angle adjustment required to give it a jolt? Proportional control.
     rollAdj = fabs(RollPitchDeviation[0]) * adaptiveCoefficient(i, 0) * leftRightFactor;
 
   }
@@ -680,7 +686,7 @@ float adjust(byte i) {
 
   return (
 #ifdef POSTURE_WALKING_FACTOR
-           (i > 3 ? postureOrWalkingFactor : 1) *
+           (i > 3 ? postureOrWalkingFactor : 1) * // this scales the angle correction
 #endif
            // rollAdj + adaptiveCoefficient(i, 1) * ((i % 4 < 2) ? RollPitchDeviation[1] : abs(RollPitchDeviation[1])));
            rollAdj + RollPitchDeviation[1] * adaptiveCoefficient(i, 1) );
@@ -700,7 +706,8 @@ void calibratedPWM(byte i, float angle) {
     if (i > 3 && i < 8)
     angle = max(-5, angle);*/
   currentAng[i] = angle; // record the state
-  int duty = calibratedDuty0[i] + angle * pulsePerDegree[i] * rotationDirection(i); // starting angle + angle * pulsePerDegree * direction
+  // starting angle + angle * pulsePerDegree * direction. Converts angles to pulses, direction and sends to servo.
+  int duty = calibratedDuty0[i] + angle * pulsePerDegree[i] * rotationDirection(i); 
   duty = max(SERVOMIN , min(SERVOMAX , duty)); // constrain required angle to servo range
   pwm.setPWM(pin(i), 0, duty); // turn servo by angle
 }

@@ -7,7 +7,7 @@
 
 motion sequence value order:
 
-nb of frames, roll, pitch, 
+nb of frames, expected roll, expected pitch, 
 motor1, motor2, motor3... motor 8,
 motor1, motor2, motor3... motor 8,
 motor1, motor2, motor3... motor 8,
